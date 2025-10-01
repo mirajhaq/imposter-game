@@ -1,4 +1,5 @@
 // src/components/SetupScreen.tsx
+'use client'
 import React, { useState } from 'react'
 import PlayerTile from './PlayerTile'
 import PlayerEditorModal from './PlayerEditorModal'
@@ -6,6 +7,8 @@ import ThemeTile from './ThemeTile'
 import ThemeEditorModal from './ThemeEditorModal'
 import ImposterHintToggle from './ImposterHintToggle'
 import ThemeHintToggle from './ThemeHintToggle'
+import { supabase } from '../lib/supabaseClient'
+import { useSupabaseAuth } from '../hooks/useSupabaseAuth'
 
 type SetupScreenProps = {
   numPlayers: number
@@ -41,6 +44,65 @@ export default function SetupScreen({
   const [showPlayerEditor, setShowPlayerEditor] = useState(false)
   const [showThemeEditor, setShowThemeEditor] = useState(false)
 
+  // Online (beta) state
+  const authReady = useSupabaseAuth()
+  const [onlineBusy, setOnlineBusy] = useState(false)
+
+  const hostOnlineGame = async () => {
+    try {
+      setOnlineBusy(true)
+      // ensure we have a session (useSupabaseAuth should have handled this)
+      const { data: sessionData } = await supabase.auth.getSession()
+      if (!sessionData.session) {
+        await supabase.auth.signInAnonymously()
+      }
+
+      const hostName = (prompt('Your name?') || 'Host').trim()
+      const { data, error } = await supabase.rpc('create_room', { host_name: hostName })
+      if (error) throw error
+
+      const row = Array.isArray(data) ? data[0] : null
+      const roomCode = row?.room_code
+      if (!roomCode) throw new Error('Room code missing from response')
+
+      const link = `${window.location.origin}/r/${roomCode}`
+      alert(`Room created!\n\nCode: ${roomCode}\nShare link: ${link}`)
+      // Navigate to the room page (create /app/r/[code]/page.tsx when ready)
+      window.location.assign(`/r/${roomCode}`)
+    } catch (e: any) {
+      alert(`Failed to create room:\n${e?.message || e}`)
+    } finally {
+      setOnlineBusy(false)
+    }
+  }
+
+  const joinOnlineGame = async () => {
+    try {
+      setOnlineBusy(true)
+      const codeInput = (prompt('Enter room code') || '').trim().toUpperCase()
+      if (!codeInput) return
+      const playerName = (prompt('Your name?') || 'Player').trim()
+
+      const { data: sessionData } = await supabase.auth.getSession()
+      if (!sessionData.session) {
+        await supabase.auth.signInAnonymously()
+      }
+
+      const { error } = await supabase.rpc('join_room', {
+        room_code: codeInput,
+        player_name: playerName,
+      })
+      if (error) throw error
+
+      alert(`Joined room ${codeInput}!`)
+      window.location.assign(`/r/${codeInput}`)
+    } catch (e: any) {
+      alert(`Failed to join room:\n${e?.message || e}`)
+    } finally {
+      setOnlineBusy(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-white via-gray-100 to-gray-200 p-4 sm:p-6">
       <div className="max-w-2xl mx-auto space-y-8">
@@ -51,7 +113,7 @@ export default function SetupScreen({
         </div>
 
         {/* Players Section */}
-        <div 
+        <div
           className="card p-4 sm:p-6 cursor-pointer hover:shadow-md transition"
           onClick={() => setShowPlayerEditor(true)}
         >
@@ -102,7 +164,37 @@ export default function SetupScreen({
           </div>
         </div>
 
-        {/* Start Game */}
+        {/* Online (beta) */}
+        <div className="card p-4 sm:p-6">
+          <div className="text-center mb-4">
+            <h2 className="text-lg font-semibold">Online (beta)</h2>
+            {!authReady && <p className="text-sm text-gray-500 mt-1">Connecting to Supabase…</p>}
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+            <button
+              onClick={hostOnlineGame}
+              disabled={!authReady || onlineBusy}
+              className="start-game-button disabled:opacity-60"
+            >
+              {onlineBusy ? 'Working…' : 'Host Online Game'}
+            </button>
+
+            <button
+              onClick={joinOnlineGame}
+              disabled={!authReady || onlineBusy}
+              className="start-game-button disabled:opacity-60"
+            >
+              {onlineBusy ? 'Working…' : 'Join Online Game'}
+            </button>
+          </div>
+
+          <p className="text-center text-xs text-gray-500 mt-3">
+            You’ll get a 4-letter code and a shareable link (e.g. /r/ABCD).
+          </p>
+        </div>
+
+        {/* Start Game (local) */}
         <div className="text-center">
           <button
             onClick={startGame}
